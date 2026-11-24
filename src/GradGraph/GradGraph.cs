@@ -17,7 +17,7 @@ namespace GradGraph
         private readonly Vector<double> Gradient;
         // The second derivative of it's vector with respect to the initial value
         private readonly Matrix<double> Hessian;
-
+        // Private constructor to copy over all values from another GradVal into a new one
         private GradVal(double value, Vector<double> derivative, Matrix<double> secondDeriv) => (Value, Gradient, Hessian) = (value, derivative, secondDeriv); 
 
         /*
@@ -50,42 +50,42 @@ namespace GradGraph
             Get the derivative vector.
         */
 
-        public Vector<double> GetGradient() => Gradient.Clone();
+        public Vector<double> GetGradient() => Gradient?.Clone();
 
         /*
             Expose the Hessian
         */
-        public Matrix<double> GetHessian() => Hessian.Clone();
+        public Matrix<double> GetHessian() => Hessian?.Clone();
 
         /*
             Expose the Length of the derivative array.
         */
-        public int Length() => Gradient.Count;
+        public int Length() => Gradient?.Count ?? 0;
 
         /*
             Sine with preserved Gradient.
         */
-        public GradVal Sin() => new GradVal(System.Math.Sin(Value), Gradient * System.Math.Cos(Value), Gradient.OuterProduct(Gradient) * -System.Math.Sin(Value) + Hessian * System.Math.Cos(Value));
+        public GradVal Sin() => Chain(Math.Sin(Value), Math.Cos(Value), -Math.Sin(Value));
 
         /*
             Cosine with preseved Gradient.
         */
-        public GradVal Cos() => new GradVal(System.Math.Cos(Value), Gradient * -System.Math.Sin(Value), -System.Math.Cos(Value) * Gradient.OuterProduct(Gradient) + -System.Math.Sin(Value) * Hessian);
+        public GradVal Cos() => Chain(Math.Cos(Value), -Math.Sin(Value), -Math.Cos(Value));
 
         // All operations involving scalars
-        public static GradVal operator -(GradVal a) => new GradVal(-a.Value, -a.Gradient, -a.Hessian);
+        public static GradVal operator -(GradVal a) => new GradVal(-a.Value, Scale(a.Gradient, -1), Scale(a.Hessian, -1));
 
         public static GradVal operator +(GradVal a, double b) => new GradVal(a.Value+b, a.Gradient, a.Hessian);
         public static GradVal operator +(double a, GradVal b) => new GradVal(a + b.Value, b.Gradient, b.Hessian);
 
         public static GradVal operator -(GradVal a, double b) => new GradVal(a.Value-b, a.Gradient, a.Hessian);
-        public static GradVal operator -(double a, GradVal b) => new GradVal(a - b.Value, -b.Gradient, -b.Hessian);
+        public static GradVal operator -(double a, GradVal b) => new GradVal(a - b.Value, Scale(b.Gradient, -1), Scale(b.Hessian, -1));
 
         public static GradVal operator *(GradVal a, double b) => new GradVal(a.Value * b, Scale(a.Gradient, b), Scale(a.Hessian, b));
         public static GradVal operator *(double a, GradVal b) => new GradVal(a * b.Value, Scale(b.Gradient, a), Scale(b.Hessian, a));
 
         public static GradVal operator /(GradVal a, double b) => new GradVal(a.Value / b, Scale(a.Gradient, 1 / b), Scale(a.Hessian, 1 / b));
-        public static GradVal operator /(double a, GradVal b) => new GradVal(a / b.Value, Scale(b.Gradient, -a / (b.Value * b.Value)), Combine(b.Gradient.OuterProduct(b.Gradient), (2 * a / System.Math.Pow(b.Value, 3)), b.Hessian, - (a / System.Math.Pow(b.Value, 2))));
+        public static GradVal operator /(double a, GradVal b) => new GradVal(a / b.Value, Scale(b.Gradient, -a / (b.Value * b.Value)), b.Chain(a / b.Value, -a / (b.Value * b.Value), 2 * a / Math.Pow(b.Value, 3)));
 
         public static bool operator >(GradVal a, double b) => a.Value > b;
         public static bool operator >(double a, GradVal b) => a > b.Value;
@@ -138,7 +138,7 @@ namespace GradGraph
             if (obj is not GradVal other)
                 return false;
             // Only true equal if everything is the same
-            return Value == other.Value && Gradient.Equals(other.Gradient) && Hessian.Equals(other.Hessian);
+            return Value == other.Value && Equals(Gradient, other.Gradient) && Equals(Hessian, other.Hessian);
         }
 
         /// <summary>
@@ -148,47 +148,41 @@ namespace GradGraph
         /// </summary>
         /// <returns>Hash for this GradVal.</returns>
         public override int GetHashCode() =>
-            HashCode.Combine(Value.GetHashCode(), Gradient.GetHashCode(), Hessian.GetHashCode());
+            HashCode.Combine(Value.GetHashCode(), Gradient?.GetHashCode() ?? 0, Hessian?.GetHashCode() ?? 0);
 
-        /*
-            Throws if vectors are differing lengths, returns null if both are defined and the same length, the opposing scaled vector if one is undefined.
-        */
-        private static Vector<double> AssertLength(Vector<double> vec1, double coef1, Vector<double> vec2, double coef2)
-        {
-            if (vec1 == null) return Scale(vec2, coef2);
-            if (vec2 == null) return Scale(vec1, coef1);
-
-            if (vec1.Count() != vec2.Count()) throw new IndexOutOfRangeException($"Vector of length {vec1.Count()} cannot be combined with vector of length {vec2.Count()}");
-
-            return null;
-        }
-
-        /*
-            Throws if matrices are differing shapes, returns null if both are defined and the same shape, the opposing scaled matrix if one is undefined.
-        */
-        private static Matrix<double> AssertShape(Matrix<double> mat1, double coef1, Matrix<double> mat2, double coef2)
-        {
-            if (mat1 == null) return Scale(mat2, coef2);
-            if (mat2 == null) return Scale(mat1, coef1);
-
-            if (mat1.ColumnCount != mat2.ColumnCount || mat1.RowCount != mat2.RowCount) throw new IndexOutOfRangeException($"Matrix of shape [{mat1.RowCount}x{mat1.ColumnCount}] is not able to be linearly combined with matrix of shape [{mat2.RowCount}x{mat2.ColumnCount}]");
-
-            return null;
-        }
+        /// <summary>
+        /// Applies the chain rule for a scalar function with value f, derivative df, and second derivative d2f
+        /// </summary>
+        /// <param name="f">The value of the scalar function</param>
+        /// <param name="df">The first derivative of the scalar function</param>
+        /// <param name="d2f">The second derivative of the scalar function</param>
+        /// <returns></returns>
+        internal GradVal Chain(double f, double df, double d2f) =>
+            new GradVal(f, Scale(Gradient, df), Combine(OuterProduct(Gradient, Gradient), d2f, Hessian, df));
 
         /*
             Linearly combines the two given derivative arrays using the given coefficients.
         */
-        private static Vector<double> Combine(Vector<double> deriv1, double coef1, Vector<double> deriv2, double coef2)
-            // Since new GradVal[n] doesn't create the Derivative reference
-            // So we take it as the derivative being all 0
-            => AssertLength(deriv1, coef1, deriv2, coef2) ?? coef1 * deriv1 + coef2 * deriv2;
+        private static Vector<double> Combine(Vector<double> vec1, double coef1, Vector<double> vec2, double coef2)
+        {
+            // null derivatives mean all zero, so just scale the other one (null if both are null)
+            if (vec1 == null) return Scale(vec2, coef2);
+            if (vec2 == null) return Scale(vec1, coef1);
+            if (vec1.Count != vec2.Count) throw new IndexOutOfRangeException($"Vector of length {vec1.Count()} cannot be combined with vector of length {vec2.Count()}");
+            return coef1 * vec1 + coef2 * vec2;
+        }
 
         /*
             Linearly combines the two given hessians or other matrices with the given coefficients.
         */
-        private static Matrix<double> Combine(Matrix<double> hess1, double coef1, Matrix<double> hess2, double coef2)
-            => AssertShape(hess1, coef1, hess2, coef2) ?? coef1 * hess1 + coef2 * hess2;
+        private static Matrix<double> Combine(Matrix<double> mat1, double coef1, Matrix<double> mat2, double coef2)
+        {
+            // null derivatives mean all zero, so just scale the other one (null if both are null)
+            if (mat1 == null) return Scale(mat2, coef2);
+            if (mat2 == null) return Scale(mat1, coef1);
+            if (mat1.RowCount != mat2.RowCount || mat1.ColumnCount != mat2.ColumnCount) throw new IndexOutOfRangeException($"Matrix of shape [{mat1.RowCount}x{mat1.ColumnCount}] is not able to be linearly combined with matrix of shape [{mat2.RowCount}x{mat2.ColumnCount}]");
+            return coef1 * mat1 + coef2 * mat2;
+        }
 
         /*
             Scales the given derivative array by the given coefficient.
@@ -214,7 +208,7 @@ namespace GradGraph
         */
         private static Matrix<double> OuterProduct(Vector<double> vec1, Vector<double> vec2)
         {
-            if (vec1 == null && vec2 == null) throw new NullReferenceException("Both vectors in outer product are null, I don't know what to do with this!");
+            if (vec1 == null && vec2 == null) return null;
             if (vec1 == null) return Matrix<double>.Build.Dense(vec2.Count(), vec2.Count());
             if (vec2 == null) return Matrix<double>.Build.Dense(vec1.Count(), vec1.Count());
 
@@ -226,16 +220,8 @@ namespace GradGraph
     {
         private readonly GradVal[] Values;
         private readonly int _length;
+        private readonly int _inputLength;
         public readonly int Length {get => _length;}
-
-        /*
-            Creates a new Vector of all zeroes.
-        */
-        public Vector(int size)
-        {
-            Values = new GradVal[size];
-            _length = Values.Length;
-        }
 
         /*
             Creates a new Vector with the given values.
@@ -248,15 +234,30 @@ namespace GradGraph
                 Values[i] = new GradVal(values, i);
             }
             _length = Values.Length;
+            _inputLength = values.Length;
+        }
+
+        /// <summary>
+        /// Create a new vector with the given values.
+        /// </summary>
+        /// <param name="values">A collection of doubles to be held in the Vector</param>
+        public Vector(params double[] values)
+        {
+            Values = new GradVal[values.Length];
+            _length = values.Length;
+            _inputLength = values.Length;
+            for (int i = 0; i < Values.Length; i++)
+                Values[i] = new GradVal(values, i);
         }
 
         /*
             Creates a new Vector that creates a COPY of the values passed, not a reference.
         */
-        public Vector(GradVal[] values)
+        public Vector(params GradVal[] values)
         {
             Values = (GradVal[])values.Clone();
             _length = Values.Length;
+            _inputLength = values.Length;
         }
 
         /*
@@ -266,6 +267,7 @@ namespace GradGraph
         {
             Values = (GradVal[])toCopy.Values.Clone();
             _length = Values.Length;
+            _inputLength = Values.Length;
         }
         
         // Allow array indexing for reading but no setting
@@ -280,9 +282,16 @@ namespace GradGraph
         public Matrix<double> GetJacobian()
         {
             // Since we treat null derivatives as all 0s we don't throw before we get here, so we gotta make sure the matrix won't throw em
-            int tempLength = Values.Length;
-            Vector<double>[] rows = Values.Select(val => val.GetGradient() ?? Vector<double>.Build.Dense(tempLength, 0.0)).ToArray();
+            Vector<double>[] rows = Values.Select(val => val.GetGradient() ?? Vector<double>.Build.Dense(_inputLength, 0.0)).ToArray();
             return Matrix<double>.Build.DenseOfRowVectors(rows);
+        }
+
+        /*
+            Creates a new Vector of all zeroes.
+        */
+        public static Vector Zeros(int size)
+        {
+            return new Vector(new GradVal[size]);
         }
 
         /*
@@ -290,7 +299,7 @@ namespace GradGraph
         */
         public Vector Extend(IEnumerable<GradVal> extension)
         {
-            Vector ret = new Vector(Length + extension.Count());
+            Vector ret = Zeros(Length + extension.Count());
             for (int i = 0; i < _length; i++)
                 ret.Values[i] = Values[i];
             for (int i = _length; i < ret._length; i++)
@@ -304,7 +313,7 @@ namespace GradGraph
         */
         public static Vector Concat(Vector vec1, Vector vec2)
         {
-            Vector ret = new Vector(vec1.Length + vec2.Count());
+            Vector ret = Zeros(vec1.Length + vec2.Count());
             for (int i = 0; i < vec1._length; i++)
                 ret.Values[i] = vec1.Values[i];
             for (int i = vec1._length; i < ret._length; i++)
@@ -347,7 +356,7 @@ namespace GradGraph
             if (a._length != b._length) throw new IndexOutOfRangeException($"Vector of length {a._length} cannot be combined with vector of length {b._length}");
 
             // Make a whole new vector so we don't mess up the grad graph
-            var ret = new Vector(a._length);
+            var ret = Zeros(a._length);
             for (int i = 0; i < ret._length; i++)
                 ret.Values[i] = a.Values[i] * aCoef + b.Values[i] * bCoef;
             return ret;
@@ -359,7 +368,7 @@ namespace GradGraph
         private static Vector Scale(Vector a, double coef)
         {
             // We create a copy of each value so we don't risk changing the gradient graph with scaling
-            var ret = new Vector(a._length);
+            var ret = Zeros(a._length);
             for (int i = 0; i < ret._length; i++)
             {
                 ret.Values[i] = a.Values[i] * coef;
@@ -370,19 +379,25 @@ namespace GradGraph
 
     public static class GradMath
     {
-        /*
-            Generate the dot product between two vectors.
-        */
+        /// <summary>
+        /// Calculates the dod product between two Vectors
+        /// </summary>
+        /// <param name="a">First Vector</param>
+        /// <param name="b">Second Vector</param>
+        /// <returns>a*b where * is the dot product</returns>
+        /// <exception cref="IndexOutOfRangeException">Thrown if the two vectors are not of the same size</exception>
         public static GradVal Dot(Vector a, Vector b)
         {
             if (a.Length != b.Length) throw new IndexOutOfRangeException($"Vector of length {a.Length} cannot be combined with vector of length {b.Length}");
 
-            GradVal ret = new GradVal(a[0].Length());
+            GradVal ret = default;
 
             for (int i = 0; i < a.Length; i++)
                 ret += a[i] * b[i];
 
             return ret;
         }
+
+
     }
 }
