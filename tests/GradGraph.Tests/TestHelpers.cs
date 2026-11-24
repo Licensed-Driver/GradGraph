@@ -1,0 +1,80 @@
+using System;
+using System.Linq;
+using GradGraph;
+using MathNet.Numerics.LinearAlgebra;
+using Xunit;
+
+namespace GradGraph.Tests
+{
+    /// <summary>
+    /// Finite-difference references and approximate assertions shared by the tests.
+    /// </summary>
+    internal static class TestHelpers
+    {
+        /// <summary>Evaluates f at plain doubles, throwing away the derivatives.</summary>
+        public static double Eval(Func<Vector, GradVal> f, double[] x) => f(new Vector(x)).GetValue();
+
+        /// <summary>Central-difference gradient of f at x.</summary>
+        public static double[] NumericGradient(Func<Vector, GradVal> f, double[] x, double h = 1e-6)
+        {
+            var grad = new double[x.Length];
+            for (int i = 0; i < x.Length; i++)
+            {
+                var plus = (double[])x.Clone();
+                var minus = (double[])x.Clone();
+                plus[i] += h;
+                minus[i] -= h;
+                grad[i] = (Eval(f, plus) - Eval(f, minus)) / (2 * h);
+            }
+            return grad;
+        }
+
+        /// <summary>Central-difference Hessian of f at x.</summary>
+        public static double[,] NumericHessian(Func<Vector, GradVal> f, double[] x, double h = 1e-4)
+        {
+            int n = x.Length;
+            var hess = new double[n, n];
+            for (int i = 0; i < n; i++)
+            {
+                for (int j = 0; j < n; j++)
+                {
+                    double Shifted(double di, double dj)
+                    {
+                        var p = (double[])x.Clone();
+                        p[i] += di;
+                        p[j] += dj;
+                        return Eval(f, p);
+                    }
+                    hess[i, j] = (Shifted(h, h) - Shifted(h, -h) - Shifted(-h, h) + Shifted(-h, -h)) / (4 * h * h);
+                }
+            }
+            return hess;
+        }
+
+        public static void AssertClose(double expected, double actual, double tol = 1e-9)
+            => Assert.True(Math.Abs(expected - actual) <= tol, $"Expected {expected}, got {actual} (tolerance {tol})");
+
+        public static void AssertClose(double[] expected, Vector<double> actual, double tol = 1e-9)
+        {
+            Assert.Equal(expected.Length, actual.Count);
+            for (int i = 0; i < expected.Length; i++)
+                Assert.True(Math.Abs(expected[i] - actual[i]) <= tol, $"Index {i}: expected {expected[i]}, got {actual[i]} (tolerance {tol})");
+        }
+
+        public static void AssertClose(double[,] expected, Matrix<double> actual, double tol = 1e-9)
+        {
+            Assert.Equal(expected.GetLength(0), actual.RowCount);
+            Assert.Equal(expected.GetLength(1), actual.ColumnCount);
+            for (int i = 0; i < actual.RowCount; i++)
+                for (int j = 0; j < actual.ColumnCount; j++)
+                    Assert.True(Math.Abs(expected[i, j] - actual[i, j]) <= tol, $"[{i},{j}]: expected {expected[i, j]}, got {actual[i, j]} (tolerance {tol})");
+        }
+
+        public static void AssertSymmetric(Matrix<double> m, double tol = 1e-12)
+        {
+            for (int i = 0; i < m.RowCount; i++)
+                for (int j = 0; j < m.ColumnCount; j++)
+                    Assert.True(Math.Abs(m[i, j] - m[j, i]) <= tol, $"Not symmetric at [{i},{j}]: {m[i, j]} vs {m[j, i]}");
+        }
+    }
+}
