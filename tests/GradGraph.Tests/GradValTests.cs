@@ -13,38 +13,42 @@ namespace GradGraph.Tests
         [Fact]
         public void InputVariable_HasUnitGradientAndZeroHessian()
         {
-            var v = new Vector(new[] { 3.0, 5.0, 7.0 });
+            var v = new GradVector(new[] { 3.0, 5.0, 7.0 });
 
             for (int i = 0; i < 3; i++)
             {
                 var expectedGrad = new double[3];
                 expectedGrad[i] = 1.0;
 
-                AssertClose(new[] { 3.0, 5.0, 7.0 }[i], v[i].GetValue());
+                AssertClose(new[] { 3.0, 5.0, 7.0 }[i], v[i].Value);
                 AssertClose(expectedGrad, v[i].GetGradient());
                 AssertClose(new double[3, 3], v[i].GetHessian());
             }
         }
 
         [Fact]
-        public void SizeConstructor_WithPosition_IsInputVariable()
+        public void PositionConstructor_IsInputVariable()
         {
-            var x = new GradVal(3, position: 1, value: 2.5);
+            var x = new GradVal(2.5, 1, 3);
 
-            AssertClose(2.5, x.GetValue());
+            AssertClose(2.5, x.Value);
             AssertClose(new[] { 0.0, 1.0, 0.0 }, x.GetGradient());
             AssertClose(new double[3, 3], x.GetHessian());
-            Assert.Equal(3, x.Length());
+            Assert.Equal(3, x.Length);
         }
 
         [Fact]
-        public void SizeConstructor_WithoutPosition_IsConstant()
+        public void ValueConstructor_IsUnsizedConstant()
         {
-            var c = new GradVal(2, value: 4.0);
+            var c = new GradVal(4.0);
+            GradVal implicitC = 4.0;
 
-            AssertClose(4.0, c.GetValue());
-            AssertClose(new[] { 0.0, 0.0 }, c.GetGradient());
-            AssertClose(new double[2, 2], c.GetHessian());
+            AssertClose(4.0, c.Value);
+            Assert.Null(c.GetGradient());
+            Assert.Null(c.GetHessian());
+            Assert.Equal(0, c.Length);
+            AssertClose(4.0, implicitC.Value);
+            Assert.Null(implicitC.GetGradient());
         }
 
         // ---------- Closed-form rules ----------
@@ -53,10 +57,10 @@ namespace GradGraph.Tests
         public void Product_MatchesClosedForm()
         {
             // f = x * y at (3, 5): grad = (y, x), Hessian = [[0, 1], [1, 0]]
-            var v = new Vector(new[] { 3.0, 5.0 });
+            var v = new GradVector(new[] { 3.0, 5.0 });
             var f = v[0] * v[1];
 
-            AssertClose(15.0, f.GetValue());
+            AssertClose(15.0, f.Value);
             AssertClose(new[] { 5.0, 3.0 }, f.GetGradient());
             AssertClose(new[,] { { 0.0, 1.0 }, { 1.0, 0.0 } }, f.GetHessian());
         }
@@ -65,10 +69,10 @@ namespace GradGraph.Tests
         public void Square_HasHessianOfTwo()
         {
             // f = x * x at x = 4: f' = 8, f'' = 2
-            var x = new Vector(new[] { 4.0 })[0];
+            var x = new GradVector(new[] { 4.0 })[0];
             var f = x * x;
 
-            AssertClose(16.0, f.GetValue());
+            AssertClose(16.0, f.Value);
             AssertClose(new[] { 8.0 }, f.GetGradient());
             AssertClose(new[,] { { 2.0 } }, f.GetHessian());
         }
@@ -77,10 +81,10 @@ namespace GradGraph.Tests
         public void Reciprocal_MatchesClosedForm()
         {
             // f = a / x at x = 2, a = 3: f' = -a/x^2, f'' = 2a/x^3
-            var x = new Vector(new[] { 2.0 })[0];
+            var x = new GradVector(new[] { 2.0 })[0];
             var f = 3.0 / x;
 
-            AssertClose(1.5, f.GetValue());
+            AssertClose(1.5, f.Value);
             AssertClose(new[] { -0.75 }, f.GetGradient());
             AssertClose(new[,] { { 0.75 } }, f.GetHessian());
         }
@@ -89,9 +93,9 @@ namespace GradGraph.Tests
         public void Sin_MatchesClosedForm()
         {
             const double x0 = 0.7;
-            var f = new Vector(new[] { x0 })[0].Sin();
+            var f = new GradVector(new[] { x0 })[0].Sin();
 
-            AssertClose(Math.Sin(x0), f.GetValue());
+            AssertClose(Math.Sin(x0), f.Value);
             AssertClose(new[] { Math.Cos(x0) }, f.GetGradient());
             AssertClose(new[,] { { -Math.Sin(x0) } }, f.GetHessian());
         }
@@ -100,9 +104,9 @@ namespace GradGraph.Tests
         public void Cos_MatchesClosedForm()
         {
             const double x0 = 0.7;
-            var f = new Vector(new[] { x0 })[0].Cos();
+            var f = new GradVector(new[] { x0 })[0].Cos();
 
-            AssertClose(Math.Cos(x0), f.GetValue());
+            AssertClose(Math.Cos(x0), f.Value);
             AssertClose(new[] { -Math.Sin(x0) }, f.GetGradient());
             AssertClose(new[,] { { -Math.Cos(x0) } }, f.GetHessian());
         }
@@ -110,25 +114,25 @@ namespace GradGraph.Tests
         [Fact]
         public void ScalarOperators_ShiftAndScaleCorrectly()
         {
-            var v = new Vector(new[] { 2.0, 3.0 });
+            var v = new GradVector(new[] { 2.0, 3.0 });
             var xy = v[0] * v[1]; // value 6, grad (3, 2), H = [[0,1],[1,0]]
 
             var shifted = 10.0 + xy - 1.0;
-            AssertClose(15.0, shifted.GetValue());
+            AssertClose(15.0, shifted.Value);
             AssertClose(new[] { 3.0, 2.0 }, shifted.GetGradient());
             AssertClose(new[,] { { 0.0, 1.0 }, { 1.0, 0.0 } }, shifted.GetHessian());
 
             var scaled = 2.0 * xy / 4.0;
-            AssertClose(3.0, scaled.GetValue());
+            AssertClose(3.0, scaled.Value);
             AssertClose(new[] { 1.5, 1.0 }, scaled.GetGradient());
             AssertClose(new[,] { { 0.0, 0.5 }, { 0.5, 0.0 } }, scaled.GetHessian());
 
             var negated = -xy;
-            AssertClose(-6.0, negated.GetValue());
+            AssertClose(-6.0, negated.Value);
             AssertClose(new[] { -3.0, -2.0 }, negated.GetGradient());
 
             var flipped = 1.0 - xy;
-            AssertClose(-5.0, flipped.GetValue());
+            AssertClose(-5.0, flipped.Value);
             AssertClose(new[] { -3.0, -2.0 }, flipped.GetGradient());
             AssertClose(new[,] { { 0.0, -1.0 }, { -1.0, 0.0 } }, flipped.GetHessian());
         }
@@ -137,10 +141,10 @@ namespace GradGraph.Tests
 
         public static IEnumerable<object[]> Composites()
         {
-            Func<Vector, GradVal> field1 = p => p[0].Sin() * (p[1] + p[2].Sin()).Cos();
-            Func<Vector, GradVal> field2 = p => (p[0] + p[1] * p[2].Sin()).Sin();
-            Func<Vector, GradVal> rational = p => p[0] * p[1] / (1.0 + p[2] * p[2]);
-            Func<Vector, GradVal> mixed = p => (2.0 - p[0]) / (p[1] + 3.0) * p[2].Cos() - 0.5 * p[0];
+            Func<GradVector, GradVal> field1 = p => p[0].Sin() * (p[1] + p[2].Sin()).Cos();
+            Func<GradVector, GradVal> field2 = p => (p[0] + p[1] * p[2].Sin()).Sin();
+            Func<GradVector, GradVal> rational = p => p[0] * p[1] / (1.0 + p[2] * p[2]);
+            Func<GradVector, GradVal> mixed = p => (2.0 - p[0]) / (p[1] + 3.0) * p[2].Cos() - 0.5 * p[0];
 
             var points = new[]
             {
@@ -159,19 +163,19 @@ namespace GradGraph.Tests
 
         [Theory]
         [MemberData(nameof(Composites))]
-        public void Gradient_MatchesFiniteDifferences(string name, Func<Vector, GradVal> f, double[] point)
+        public void Gradient_MatchesFiniteDifferences(string name, Func<GradVector, GradVal> f, double[] point)
         {
             _ = name; // shown in the test runner to identify the case
-            var result = f(new Vector(point));
+            var result = f(new GradVector(point));
             AssertClose(NumericGradient(f, point), result.GetGradient(), tol: 1e-7);
         }
 
         [Theory]
         [MemberData(nameof(Composites))]
-        public void Hessian_MatchesFiniteDifferences(string name, Func<Vector, GradVal> f, double[] point)
+        public void Hessian_MatchesFiniteDifferences(string name, Func<GradVector, GradVal> f, double[] point)
         {
             _ = name;
-            var result = f(new Vector(point));
+            var result = f(new GradVector(point));
             var hessian = result.GetHessian();
 
             AssertSymmetric(hessian);
@@ -183,7 +187,7 @@ namespace GradGraph.Tests
         [Fact]
         public void ComparisonOperators_CompareValuesOnly()
         {
-            var v = new Vector(new[] { 1.0, 2.0 });
+            var v = new GradVector(new[] { 1.0, 2.0 });
 
             Assert.True(v[0] < v[1]);
             Assert.True(v[1] > 1.5);
@@ -193,17 +197,23 @@ namespace GradGraph.Tests
         }
 
         [Fact]
-        public void Equals_ComparesValueAndDerivatives()
+        public void EqualityAndEquals_CompareValuesOnly()
         {
-            var a = new Vector(new[] { 1.0, 2.0 })[0];
-            var b = new Vector(new[] { 1.0, 2.0 })[0];
-            var c = new Vector(new[] { 1.0, 2.0 })[1] - 1.0; // value 1.0 but different gradient
+            var a = new GradVector(new[] { 1.0, 2.0 })[0];
+            var c = new GradVector(new[] { 1.0, 2.0 })[1] - 1.0; // value 1.0 but different gradient
+            var d = new GradVector(new[] { 1.0, 2.0 })[1];       // value 2.0
 
-            Assert.True(a.Equals(b));
-            Assert.Equal(a.GetHashCode(), b.GetHashCode());
+            // == and Equals agree, and both ignore the derivatives
+            Assert.True(a == c);
+            Assert.True(a.Equals(c));
+            Assert.Equal(a.GetHashCode(), c.GetHashCode());
 
-            Assert.True(a == c);       // == only looks at Value
-            Assert.False(a.Equals(c)); // Equals also looks at the derivatives
+            Assert.False(a == d);
+            Assert.False(a.Equals(d));
+
+            // Collections use Equals, so they match on value too
+            Assert.Contains(c, new List<GradVal> { a });
+            Assert.Single(new HashSet<GradVal> { a, c });
         }
 
         // ---------- Immutability ----------
@@ -211,7 +221,7 @@ namespace GradGraph.Tests
         [Fact]
         public void Getters_ReturnCopies()
         {
-            var x = new Vector(new[] { 1.0, 2.0 })[0];
+            var x = new GradVector(new[] { 1.0, 2.0 })[0];
 
             x.GetGradient()[0] = 99.0;
             x.GetHessian()[0, 0] = 99.0;

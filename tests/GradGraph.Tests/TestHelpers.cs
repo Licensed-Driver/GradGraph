@@ -12,10 +12,10 @@ namespace GradGraph.Tests
     internal static class TestHelpers
     {
         /// <summary>Evaluates f at plain doubles, throwing away the derivatives.</summary>
-        public static double Eval(Func<Vector, GradVal> f, double[] x) => f(new Vector(x)).GetValue();
+        public static double Eval(Func<GradVector, GradVal> f, double[] x) => f(new GradVector(x)).Value;
 
         /// <summary>Central-difference gradient of f at x.</summary>
-        public static double[] NumericGradient(Func<Vector, GradVal> f, double[] x, double h = 1e-6)
+        public static double[] NumericGradient(Func<GradVector, GradVal> f, double[] x, double h = 1e-6)
         {
             var grad = new double[x.Length];
             for (int i = 0; i < x.Length; i++)
@@ -30,7 +30,7 @@ namespace GradGraph.Tests
         }
 
         /// <summary>Central-difference Hessian of f at x.</summary>
-        public static double[,] NumericHessian(Func<Vector, GradVal> f, double[] x, double h = 1e-4)
+        public static double[,] NumericHessian(Func<GradVector, GradVal> f, double[] x, double h = 1e-4)
         {
             int n = x.Length;
             var hess = new double[n, n];
