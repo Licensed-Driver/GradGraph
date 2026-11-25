@@ -63,11 +63,10 @@ namespace GradGraph
         /// <param name="position">The position of this value in <paramref name="vals"/></param>
         public GradVal(double[] vals, int position)
         {
-            var arr = vals.ToArray();
-            if (position >= arr.Length || position < 0) throw new IndexOutOfRangeException($"Position {position} is out of range for {arr.Length} values");
-            Value = arr[position];
-            _gradient = Vector<double>.Build.Dense(arr.Length, i => i == position ? 1.0 : 0.0);   // All start at 0
-            _hessian = Matrix<double>.Build.Dense(arr.Length, arr.Length);
+            if (position >= vals.Length || position < 0) throw new IndexOutOfRangeException($"Position {position} is out of range for {vals.Length} values");
+            Value = vals[position];
+            _gradient = Vector<double>.Build.Dense(vals.Length, i => i == position ? 1.0 : 0.0);   // All start at 0
+            _hessian = Matrix<double>.Build.Dense(vals.Length, vals.Length);
         }
 
         /*
