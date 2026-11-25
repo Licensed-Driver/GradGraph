@@ -45,22 +45,14 @@ namespace GradGraph
         public GradVal(double value) => (Value, _gradient, _hessian) = (value, default, default);
 
         /// <summary>
-        /// Creates a new GradVal cloned from the given GradVal.
+        /// Creates a new GradVal.
+        /// The value is selected as <paramref name="vals"/>[<paramref name="position"/>].
+        /// The gradient and Hessian are created from <paramref name="vals"/>.
         /// </summary>
-        /// <param name="value">GradVal whose value, gradient, and Hessian are cloned into the new GradVal.</param>
-        public GradVal(GradVal value) => this = value;
-
-        /*
-            Initialize the initial value and create the deriv, which always starts as 1
-        */
-        public GradVal(IEnumerable<double> vals, int position)
-        {
-            var arr = vals.ToArray();
-            if (position >= arr.Length) throw new IndexOutOfRangeException($"Position {position} is out of range for {arr.Length} values");
-            Value = arr[position];
-            _gradient = Vector<double>.Build.Dense(arr.Length, i => i == position ? 1.0 : 0.0);   // All start at 0
-            _hessian = Matrix<double>.Build.Dense(arr.Length, arr.Length);
-        }
+        /// <param name="vals">The vector this value is from (i.e. the values it depends on)</param>
+        /// <param name="position">The position of this value in <paramref name="vals"/></param>
+        public GradVal(IEnumerable<double> vals, int position) : 
+            this(vals.ToArray(), position) {}
 
         /// <summary>
         /// Creates a new GradVal.
@@ -71,10 +63,11 @@ namespace GradGraph
         /// <param name="position">The position of this value in <paramref name="vals"/></param>
         public GradVal(double[] vals, int position)
         {
-            if (position >= vals.Length) throw new IndexOutOfRangeException($"Position {position} is out of range for {vals.Length} values");
-            Value = vals[position];
-            _gradient = Vector<double>.Build.Dense(vals.Length, i => i == position ? 1.0 : 0.0);   // All start at 0
-            _hessian = Matrix<double>.Build.Dense(vals.Length, vals.Length);
+            var arr = vals.ToArray();
+            if (position >= arr.Length || position < 0) throw new IndexOutOfRangeException($"Position {position} is out of range for {arr.Length} values");
+            Value = arr[position];
+            _gradient = Vector<double>.Build.Dense(arr.Length, i => i == position ? 1.0 : 0.0);   // All start at 0
+            _hessian = Matrix<double>.Build.Dense(arr.Length, arr.Length);
         }
 
         /*
@@ -82,7 +75,7 @@ namespace GradGraph
         */
         public GradVal(double value, int position, int size)
         {
-            if (position >= size) throw new IndexOutOfRangeException($"Position {position} is out of range for {size} values");
+            if (position >= size || position < 0) throw new IndexOutOfRangeException($"Position {position} is out of range for {size} values");
             Value = value;
             _gradient = Vector<double>.Build.Dense(size, i => i == position ? 1.0 : 0);
             _hessian = Matrix<double>.Build.Dense(size, size);
@@ -165,7 +158,7 @@ namespace GradGraph
 
         /// <summary>
         /// Evaluate if given object is equivalent to this GradVal in all aspects.
-        /// Is not equivalent to == as this compares value and derivatives.
+        /// Is not equivalent to == as this compares value.
         /// </summary>
         /// <param name="obj">The object to compare against.</param>
         /// <returns>True if obj is a GradVal and has the same value, gradient, and hessian. False otherwise.</returns>
@@ -175,12 +168,12 @@ namespace GradGraph
             if (obj is not GradVal other)
                 return false;
             // Only true equal if everything is the same
-            return this.Value.Equals(other.Value);
+            return Value.Equals(other.Value);
         }
 
         /// <summary>
         /// Get the hash for this GradVal.
-        /// Hash preserves equivalence in all fields,
+        /// Hash preserves equivalence in value,
         /// i.e. GradVal1.Equals(GradVal2) = True => GradVal1.GetHashCode() == GradVal2.GetHashCode() = True
         /// </summary>
         /// <returns>Hash for this GradVal.</returns>
@@ -270,9 +263,10 @@ namespace GradGraph
         /// <param name="values">The value Enumerable to be copied.</param>
         public GradVector(IEnumerable<GradVal> values)
         {
-            Values = values.ToArray();
+            var arr = values.ToArray();
+            Values = arr;
             _length = Values.Length;
-            _inputLength = GradMath.InputSize(values);
+            _inputLength = GradMath.InputSize(arr);
         }
 
         /// <summary>
@@ -307,6 +301,19 @@ namespace GradGraph
             _length = Values.Length;
             _inputLength = GradMath.InputSize(toCopy);
         }
+
+        /// <summary>
+        /// Private constructor for static methods that can compute their own values to avoid an extra clone.
+        /// </summary>
+        /// <param name="values">Value array reference to be used in values.</param>
+        /// <param name="length">Length of <paramref name="values"/></param>
+        /// <param name="inputLength">Number of inputs each value depends on.</param>
+        private GradVector(GradVal[] values, int length, int inputLength)
+        {
+            Values = values;
+            _length = length;
+            _inputLength = inputLength;
+        }
         
         // Allow array indexing for reading but no setting
         public GradVal this[int index]
@@ -340,15 +347,18 @@ namespace GradGraph
         */
         public GradVector Extend(IEnumerable<GradVal> extension)
         {
-            
             var arr = extension.ToArray();
-            GradVector ret = Zeros(Length + arr.Length);
+            GradVal[] ret = new GradVal[Length + arr.Length];
             for (int i = 0; i < _length; i++)
-                ret.Values[i] = Values[i];
-            for (int i = _length; i < ret._length; i++)
-                ret.Values[i] = arr[i - _length];
+                ret[i] = Values[i]; // We already know these are the same input length since they would've already been checked
+            for (int i = _length; i < ret.Length; i++)
+            {
+                AssertInputLengthContinuity(arr[i - _length]);
+                ret[i] = arr[i - _length];
+            }
 
-            return ret;
+            // If this vector is all constants, the input size comes from the extension (InputSize also doesn't allow mixed sizes so that's chill)
+            return new GradVector(ret, ret.Length, _inputLength != 0 ? _inputLength : GradMath.InputSize(arr));
         }
 
         /// <summary>
@@ -358,12 +368,12 @@ namespace GradGraph
         /// <returns>New Vector with the value appended</returns>
         public GradVector Append(GradVal value)
         {
-            AssertInputLengthContinuity(ref value);
-            GradVector ret = Zeros(_length + 1);
+            AssertInputLengthContinuity(value);
+            GradVal[] ret = new GradVal[_length + 1];
             for (int i = 0; i < _length; i++)
-                ret.Values[i] = Values[i];
-            ret.Values[_length] = value;
-            return ret;
+                ret[i] = Values[i];
+            ret[_length] = value;
+            return new GradVector(ret, ret.Length, _inputLength != 0 ? _inputLength : value.Length);
         }
 
         /*
@@ -371,21 +381,20 @@ namespace GradGraph
         */
         public static GradVector Concat(GradVector vec1, GradVector vec2)
         {
-            vec1.AssertInputLengthContinuity(ref vec2);
-            GradVector ret = Zeros(vec1.Length + vec2.Length);
+            vec1.AssertInputLengthContinuity(vec2);
+            GradVal[] ret = new GradVal[vec1._length + vec2._length];
             for (int i = 0; i < vec1._length; i++)
-                ret.Values[i] = vec1.Values[i];
-            for (int i = vec1._length; i < ret._length; i++)
-                ret.Values[i] = vec2.Values[i - vec1._length];
+                ret[i] = vec1.Values[i];
+            for (int i = vec1._length; i < ret.Length; i++)
+                ret[i] = vec2.Values[i - vec1._length];
 
-            return ret;
+            return new GradVector(ret, ret.Length, vec1._inputLength != 0 ? vec1._inputLength : vec2._inputLength);
         }
 
         /// <summary>
         /// Apply a function that transforms GradVal across the given GradVector.
         /// </summary>
         /// <param name="func">Function that takes in and outputs a GradVal to apply a singular transformation.</param>
-        /// <param name="vec">The GradVector to apply the  transformation to.</param>
         /// <returns>A new GradVector containing the transformed GradVals</returns>
         public GradVector Apply(Func<GradVal, GradVal> func) =>
             new GradVector(Values.Select(func));
@@ -417,9 +426,9 @@ namespace GradGraph
         /// </summary>
         /// <param name="val">GradVal to be added to the GradVector.</param>
         /// <exception cref="ArgumentException">Thrown if GradVal.Length (gradient size) is defined and not equal to _inputLength.</exception>
-        private void AssertInputLengthContinuity(ref GradVal val)
+        private void AssertInputLengthContinuity(in GradVal val)
         {
-            if (val.Length != 0 && _inputLength != val.Length) throw new ArgumentException($"Cannot add Cannot add GradVal with gradient size: {val.Length} to GradVector of input size: {_inputLength}");
+            if (_inputLength != 0 && val.Length != 0 && _inputLength != val.Length) throw new ArgumentException($"Cannot add Cannot add GradVal with gradient size: {val.Length} to GradVector of input size: {_inputLength}");
         }
 
         /// <summary>
@@ -428,9 +437,9 @@ namespace GradGraph
         /// </summary>
         /// <param name="vec">GradVec to be checked against.</param>
         /// /// <exception cref="ArgumentException">Thrown if GradVal.Length (gradient size) is defined and not equal to _inputLength.</exception>
-        private void AssertInputLengthContinuity(ref GradVector vec)
+        private void AssertInputLengthContinuity(in GradVector vec)
         {
-            if (vec._inputLength != 0 && _inputLength != vec._inputLength) throw new ArgumentException($"Cannot combine two GradVectors of different input sizes: {_inputLength} and {vec._inputLength}");
+            if (_inputLength != 0 && vec._inputLength != 0 && _inputLength != vec._inputLength) throw new ArgumentException($"Cannot combine two GradVectors of different input sizes: {_inputLength} and {vec._inputLength}");
         }
 
         /*
@@ -439,12 +448,13 @@ namespace GradGraph
         private static GradVector LinearCombine(GradVector a, double aCoef, GradVector b, double bCoef)
         {
             if (a._length != b._length) throw new IndexOutOfRangeException($"Vector of length {a._length} cannot be combined with vector of length {b._length}");
+            a.AssertInputLengthContinuity(b);
 
             // Make a whole new vector so we don't mess up the grad graph
-            var ret = Zeros(a._length);
-            for (int i = 0; i < ret._length; i++)
-                ret.Values[i] = a.Values[i] * aCoef + b.Values[i] * bCoef;
-            return ret;
+            GradVal[] ret = new GradVal[a._length];
+            for (int i = 0; i < ret.Length; i++)
+                ret[i] = a.Values[i] * aCoef + b.Values[i] * bCoef;
+            return new GradVector(ret, ret.Length, a._inputLength != 0 ? a._inputLength : b._inputLength);
         }
 
         /*
@@ -453,13 +463,37 @@ namespace GradGraph
         private static GradVector Scale(GradVector a, double coef)
         {
             // We create a copy of each value so we don't risk changing the gradient graph with scaling
-            var ret = Zeros(a._length);
-            for (int i = 0; i < ret._length; i++)
+            GradVal[] ret = new GradVal[a._length];
+            for (int i = 0; i < ret.Length; i++)
             {
-                ret.Values[i] = a.Values[i] * coef;
+                ret[i] = a.Values[i] * coef;
             }
-            return ret;
+            return new GradVector(ret, ret.Length, a._inputLength);
         }
+
+        /// <summary>
+        /// A static factory to create a new GradVector of only constants.
+        /// Constants mean that they have a 0 gradient.
+        /// Input size of zero gradients is determined at runtime and thus not needed.
+        /// </summary>
+        /// <param name="values">A list of doubles that depend on no other values in the space.</param>
+        /// <returns>A new GradVector of constants (0 gradient)</returns>
+        public static GradVector Constants(params double[] values)
+        {
+            GradVal[] vals = new GradVal[values.Length];
+            for (int i = 0; i < vals.Length; i++) vals[i] = new GradVal(values[i]);
+            return new GradVector(vals, vals.Length, 0);
+        }
+
+        /// <summary>
+        /// A static factory to create a new GradVector of only constants.
+        /// Constants mean that they have a 0 gradient.
+        /// Input size of zero gradients is determined at runtime and thus not needed.
+        /// </summary>
+        /// <param name="values">A list of doubles that depend on no other values in the space.</param>
+        /// <returns>A new GradVector of constants (0 gradient)</returns>
+        public static GradVector Constants(IEnumerable<double> values) =>
+            Constants(values.ToArray());
     }
 
     public static class GradMath
@@ -489,7 +523,7 @@ namespace GradGraph
         /// </summary>
         /// <param name="values">The GradVals to get input size from</param>
         /// <returns>0 if all values are constant, otherwise input size</returns>
-        /// <exception cref="ArgumentException">Thrown when <paramref name="values"/> contains mixed input dimensions<exception/>
+        /// <exception cref="ArgumentException">Thrown when <paramref name="values"/> contains mixed input dimensions</exception>
         public static int InputSize(IEnumerable<GradVal> values)
         {
             // Pull out all the distinct sizes to make sure they haven't mixed input dims
