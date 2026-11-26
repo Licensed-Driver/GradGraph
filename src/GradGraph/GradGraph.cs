@@ -9,6 +9,11 @@ using MathNet.Numerics;
 namespace GradGraph
 {
 
+    /// <summary>
+    /// A scalar that carries its exact gradient and Hessian through every operation (forward-mode automatic differentiation).
+    /// Every operation returns a new GradVal with the value, gradient, and Hessian updated by the chain rule.
+    /// GradVals with no gradient or Hessian (e.g. from a double) are treated as constants.
+    /// </summary>
     public readonly struct GradVal
     {
 
@@ -18,24 +23,28 @@ namespace GradGraph
         private readonly Matrix<double> _hessian;
         // Private constructor to copy over all values from another GradVal into a new one
         private GradVal(double value, Vector<double> derivative, Matrix<double> secondDeriv) => (Value, _gradient, _hessian) = (value, derivative, secondDeriv);
-        
-        // The forward value of the initial number, so what our result will be if we never use the derivative
+
+        /// <summary>
+        /// Double value of this GradVal.
+        /// </summary>
         public double Value { get; }
 
-        /*
-            Get the derivative vector.
-        */
-
+        /// <summary>
+        /// Retrives a copy of the gradient for this GradVal instance.
+        /// </summary>
+        /// <returns>A clone of the gradient vector</returns>
         public Vector<double> GetGradient() => _gradient?.Clone();
 
-        /*
-            Expose the Hessian
-        */
+        /// <summary>
+        /// Retrieves a copy of the Hessian matrix for this GradVal instance.
+        /// </summary>
+        /// <returns>A clone of the Hessian matrix</returns>
         public Matrix<double> GetHessian() => _hessian?.Clone();
 
-        /*
-            Expose the Length of the derivative array.
-        */
+        /// <summary>
+        /// The amount of inputs for this gradval.
+        /// i.e. The number of variables this GradVal depends on, and the length of the gradient Vector.
+        /// </summary>
         public int Length => _gradient?.Count ?? 0;
 
         /// <summary>
@@ -69,9 +78,13 @@ namespace GradGraph
             _hessian = Matrix<double>.Build.Dense(vals.Length, vals.Length);
         }
 
-        /*
-            Creates a new GradVal of given size with given value at given position in the gradient.
-        */
+        /// <summary>
+        /// Creates a new GradVal with <paramref name="value"/> at <paramref name="position"/> in a vector of <paramref name="size"/>
+        /// </summary>
+        /// <param name="value">The value of this GradVal, which is dependent on all variables in a vector of <paramref name="size"/></param>
+        /// <param name="position">The position of <paramref name="value"/> within its source vector</param>
+        /// <param name="size">The size of this GradVals source vector</param>
+        /// <exception cref="IndexOutOfRangeException"></exception>
         public GradVal(double value, int position, int size)
         {
             if (position >= size || position < 0) throw new IndexOutOfRangeException($"Position {position} is out of range for {size} values");
@@ -90,69 +103,281 @@ namespace GradGraph
         public GradVal Chain(double f, double df, double d2f) =>
             new GradVal(f, Scale(_gradient, df), Combine(OuterProduct(_gradient, _gradient), d2f, _hessian, df));
 
-        /*
-            Sine with preserved Gradient.
-        */
+        /// <summary>
+        /// Calculate a new GradVal holding the Sine of this GradVal.
+        /// Continues the gradient and Hessian through the first and second derivative of the Sine function.
+        /// </summary>
+        /// <returns>A new GradVal that contains the exact value, gradient, and Hessian of this GradVal sined</returns>
         public GradVal Sin() => Chain(Math.Sin(Value), Math.Cos(Value), -Math.Sin(Value));
 
-        /*
-            Cosine with preseved Gradient.
-        */
+        /// <summary>
+        /// Calculate a new GradVal holding the Cosine of this GradVal.
+        /// Continues the gradient and Hessian through the first and second derivative of the Cosin function.
+        /// </summary>
+        /// <returns>A new GradVal that contains the exact value, gradient, and Hessian of this GradVal Cosined</returns>
         public GradVal Cos() => Chain(Math.Cos(Value), -Math.Sin(Value), -Math.Cos(Value));
 
         // All operations involving scalars
+        /// <summary>
+        /// Unary negative operator. Makes value negative, preserving gradient and Hessian
+        /// </summary>
+        /// <param name="a">GradVal to negate.</param>
+        /// <returns></returns>
         public static GradVal operator -(GradVal a) => new GradVal(-a.Value, Scale(a._gradient, -1), Scale(a._hessian, -1));
+        /// <summary>
+        /// Implicit cast operator from double to GradVal constant.
+        /// Resulting GradVal does not contain a Gradient or Hessian, as it is assumed to be a constant.
+        /// </summary>
+        /// <param name="a">double to cast</param>
         public static implicit operator GradVal(double a) => new GradVal(a);
 
+        /// <summary>
+        /// Add a constant to the GradVal.
+        /// Preserves accurate gradient and Hessian.
+        /// </summary>
+        /// <param name="a">GradVal to add to</param>
+        /// <param name="b">Constant to be added</param>
+        /// <returns>New GradVal with the value, gradient, and Hessian resulting from Constant addition</returns>
         public static GradVal operator +(GradVal a, double b) => new GradVal(a.Value+b, a._gradient, a._hessian);
+        /// <summary>
+        /// Add a constant to the GradVal.
+        /// Preserves accurate gradient and Hessian.
+        /// </summary>
+        /// <param name="a">Constant to be added</param>
+        /// <param name="b">GradVal to add to</param>
+        /// <returns>New GradVal with the value, gradient, and Hessian resulting from Constant addition</returns>
         public static GradVal operator +(double a, GradVal b) => new GradVal(a + b.Value, b._gradient, b._hessian);
 
+        /// <summary>
+        /// Subtract a constant from the GradVal.
+        /// Preserves accurate gradient and Hesssian.
+        /// </summary>
+        /// <param name="a">GradVal to be subtracted from</param>
+        /// <param name="b">Constant to subtract</param>
+        /// <returns>New GradVal with the value, gradient, and Hessian resulting from Constant subtraction</returns>
         public static GradVal operator -(GradVal a, double b) => new GradVal(a.Value-b, a._gradient, a._hessian);
+        /// <summary>
+        /// Subtract a GradVal from a constant.
+        /// Preserves accurate gradient and Hesssian.
+        /// </summary>
+        /// <param name="a">Constant to be subtracted from</param>
+        /// <param name="b">GradVal to subtract</param>
+        /// <returns>New GradVal with the value, gradient, and Hessian resulting from Constant subtraction</returns>
         public static GradVal operator -(double a, GradVal b) => new GradVal(a - b.Value, Scale(b._gradient, -1), Scale(b._hessian, -1));
 
+        /// <summary>
+        /// Multiply a GradVal by a constant.
+        /// Preserves accurate gradient and Hessian.
+        /// </summary>
+        /// <param name="a">GradVal to be scalar multiplied</param>
+        /// <param name="b">Constant to multiply by</param>
+        /// <returns>New GradVal with the value, gradient, and Hessian resulting from scalar multiplication</returns>
         public static GradVal operator *(GradVal a, double b) => new GradVal(a.Value * b, Scale(a._gradient, b), Scale(a._hessian, b));
+        /// <summary>
+        /// Multiply a GradVal by a constant.
+        /// Preserves accurate gradient and Hessian.
+        /// </summary>
+        /// <param name="a">Constant to multiply by</param>
+        /// <param name="b">GradVal to be scalar multiplied</param>
+        /// <returns>New GradVal with the value, gradient, and Hessian resulting from scalar multiplication</returns>
         public static GradVal operator *(double a, GradVal b) => new GradVal(a * b.Value, Scale(b._gradient, a), Scale(b._hessian, a));
 
+        /// <summary>
+        /// Divide a GradVal by a constant.
+        /// Preserves accurate gradient and Hessian.
+        /// </summary>
+        /// <param name="a">GradVal to be scalar divided</param>
+        /// <param name="b">Constant to divide by</param>
+        /// <returns>New GradVal with the value, gradient, and Hessian resulting from scalar division</returns>
         public static GradVal operator /(GradVal a, double b) => new GradVal(a.Value / b, Scale(a._gradient, 1 / b), Scale(a._hessian, 1 / b));
+        /// <summary>
+        /// Divide a GradVal by a constant.
+        /// Preserves accurate gradient and Hessian.
+        /// </summary>
+        /// <param name="a">Constant to get divided</param>
+        /// <param name="b">GradVal to divide by</param>
+        /// <returns>New GradVal with the value, gradient, and Hessian resulting from scalar division</returns>
         public static GradVal operator /(double a, GradVal b) => b.Chain(a / b.Value, -a / (b.Value * b.Value), 2 * a / Math.Pow(b.Value, 3));
 
+        /// <summary>
+        /// Compare if the value of <paramref name="a"/> is greater than <paramref name="b"/>.
+        /// </summary>
+        /// <param name="a">GradVal to compare the value of</param>
+        /// <param name="b">double to compare against</param>
+        /// <returns>True if value of <paramref name="a"/> is greater than <paramref name="b"/></returns>
         public static bool operator >(GradVal a, double b) => a.Value > b;
+        /// <summary>
+        /// Compare if <paramref name="a"/> is greater than the value of <paramref name="b"/>.
+        /// </summary>
+        /// <param name="a">double to compare</param>
+        /// <param name="b">GradVal to compare its value against</param>
+        /// <returns>True if <paramref name="a"/> is greater than value of <paramref name="b"/></returns>
         public static bool operator >(double a, GradVal b) => a > b.Value;
 
+        /// <summary>
+        /// Compare if the value of <paramref name="a"/> is less than <paramref name="b"/>.
+        /// </summary>
+        /// <param name="a">GradVal to compare the value of</param>
+        /// <param name="b">double to compare against</param>
+        /// <returns>True if the value of <paramref name="a"/> is less than <paramref name="b"/></returns>
         public static bool operator <(GradVal a, double b) => a.Value < b;
+        /// <summary>
+        /// Compare if <paramref name="a"/> is less than the value of <paramref name="b"/>.
+        /// </summary>
+        /// <param name="a">double to compare</param>
+        /// <param name="b">GradVal to compare its value against</param>
+        /// <returns>True if <paramref name="a"/> is less than the value of <paramref name="b"/></returns>
         public static bool operator <(double a, GradVal b) => a < b.Value;
 
+        /// <summary>
+        /// Compare if the value of <paramref name="a"/> is equal to <paramref name="b"/>.
+        /// </summary>
+        /// <param name="a">GradVal to compare the value of</param>
+        /// <param name="b">double to compare against</param>
+        /// <returns>True if the value of <paramref name="a"/> is equal to <paramref name="b"/></returns>
         public static bool operator ==(GradVal a, double b) => a.Value == b;
+        /// <summary>
+        /// Compare if <paramref name="a"/> is equal to the value of <paramref name="b"/>.
+        /// </summary>
+        /// <param name="a">double to compare</param>
+        /// <param name="b">GradVal to compare its value against</param>
+        /// <returns>True if <paramref name="a"/> is equal to the value of <paramref name="b"/></returns>
         public static bool operator ==(double a, GradVal b) => a == b.Value;
 
+        /// <summary>
+        /// Compare if the value of <paramref name="a"/> is not equal to <paramref name="b"/>.
+        /// </summary>
+        /// <param name="a">GradVal to compare the value of</param>
+        /// <param name="b">double to compare against</param>
+        /// <returns>True if the value of <paramref name="a"/> is not equal to <paramref name="b"/></returns>
         public static bool operator !=(GradVal a, double b) => a.Value != b;
+        /// <summary>
+        /// Compare if <paramref name="a"/> is not equal to the value of <paramref name="b"/>.
+        /// </summary>
+        /// <param name="a">double to compare</param>
+        /// <param name="b">GradVal to compare its value against</param>
+        /// <returns>True if <paramref name="a"/> is not equal to the value of <paramref name="b"/></returns>
         public static bool operator !=(double a, GradVal b) => a != b.Value;
 
+        /// <summary>
+        /// Compare if the value of <paramref name="a"/> is less than or equal to <paramref name="b"/>.
+        /// </summary>
+        /// <param name="a">GradVal to compare the value of</param>
+        /// <param name="b">double to compare against</param>
+        /// <returns>True if the value of <paramref name="a"/> is less than or equal to <paramref name="b"/></returns>
         public static bool operator <=(GradVal a, double b) => a.Value <= b;
+        /// <summary>
+        /// Compare if <paramref name="a"/> is less than or equal to the value of <paramref name="b"/>.
+        /// </summary>
+        /// <param name="a">double to compare</param>
+        /// <param name="b">GradVal to compare its value against</param>
+        /// <returns>True if <paramref name="a"/> is less than or equal to the value of <paramref name="b"/></returns>
         public static bool operator <=(double a, GradVal b) => a <= b.Value;
 
+        /// <summary>
+        /// Compare if the value of <paramref name="a"/> is greater than or equal to <paramref name="b"/>.
+        /// </summary>
+        /// <param name="a">GradVal to compare the value of</param>
+        /// <param name="b">double to compare against</param>
+        /// <returns>True if the value of <paramref name="a"/> is greater than or equal to <paramref name="b"/></returns>
         public static bool operator >=(GradVal a, double b) => a.Value >= b;
+        /// <summary>
+        /// Compare if <paramref name="a"/> is greater than or equal to the value of <paramref name="b"/>.
+        /// </summary>
+        /// <param name="a">double to compare</param>
+        /// <param name="b">GradVal to compare its value against</param>
+        /// <returns>True if <paramref name="a"/> is greater than or equal to the value of <paramref name="b"/></returns>
         public static bool operator >=(double a, GradVal b) => a >= b.Value;
 
         // All operations involving two GradVals
+        /// <summary>
+        /// Add two GradVals.
+        /// Preserves accurate gradient and Hessian.
+        /// </summary>
+        /// <param name="a">Left GradVal to add</param>
+        /// <param name="b">Right GradVal to add</param>
+        /// <returns>New GradVal with the value, gradient, and Hessian resulting from addition</returns>
         public static GradVal operator +(GradVal a, GradVal b) => new GradVal(a.Value + b.Value, Combine(a._gradient, 1, b._gradient, 1), Combine(a._hessian, 1, b._hessian, 1));
 
+        /// <summary>
+        /// Subtract two GradVals.
+        /// Preserves accurate gradient and Hessian.
+        /// </summary>
+        /// <param name="a">GradVal to get subtracted from</param>
+        /// <param name="b">GradVal to subtract</param>
+        /// <returns>New GradVal with the value, gradient, and Hessian resulting from subtraction</returns>
         public static GradVal operator -(GradVal a, GradVal b) => new GradVal(a.Value - b.Value, Combine(a._gradient, 1, b._gradient, -1), Combine(a._hessian, 1, b._hessian, -1));
 
+        /// <summary>
+        /// Multiply two GradVals.
+        /// Preserves accurate gradient and Hessian.
+        /// </summary>
+        /// <param name="a">Left GradVal to multiply</param>
+        /// <param name="b">Right GradVal to multiply</param>
+        /// <returns>New GradVal with the value, gradient, and Hessian resulting from multiplication</returns>
         public static GradVal operator *(GradVal a, GradVal b) => new GradVal(a.Value * b.Value, Combine(a._gradient, b.Value, b._gradient, a.Value), Combine(Combine(a._hessian, b.Value, b._hessian, a.Value), 1, Combine(OuterProduct(a._gradient, b._gradient), 1, OuterProduct(b._gradient, a._gradient), 1), 1));
 
+        /// <summary>
+        /// Divide a GradVal by another GradVal.
+        /// Preserves accurate gradient and Hessian.
+        /// </summary>
+        /// <param name="a">Numerator GradVal</param>
+        /// <param name="b">Denominator GradVal</param>
+        /// <returns>New GradVal with the value, gradient, and Hessian resulting from division</returns>
         public static GradVal operator /(GradVal a, GradVal b) => a * (1/b);    // All steps copy so we chillin
 
+        /// <summary>
+        /// Compare whether the value of <paramref name="a"/> is greater than the value of <paramref name="b"/>.
+        /// Does not compare gradient or Hessian.
+        /// </summary>
+        /// <param name="a">Left GradVal to compare</param>
+        /// <param name="b">Right GradVal to compare</param>
+        /// <returns>True if value of <paramref name="a"/> is greater than the value of <paramref name="b"/></returns>
         public static bool operator >(GradVal a, GradVal b) => a.Value > b.Value;
 
+        /// <summary>
+        /// Compare whether the value of <paramref name="a"/> is less than the value of <paramref name="b"/>.
+        /// Does not compare gradient or Hessian.
+        /// </summary>
+        /// <param name="a">Left GradVal to compare</param>
+        /// <param name="b">Right GradVal to compare</param>
+        /// <returns>True if value of <paramref name="a"/> is less than the value of <paramref name="b"/></returns>
         public static bool operator <(GradVal a, GradVal b) => a.Value < b.Value;
 
+        /// <summary>
+        /// Compare whether the value of <paramref name="a"/> is equal to the value of <paramref name="b"/>.
+        /// Does not compare gradient or Hessian.
+        /// </summary>
+        /// <param name="a">Left GradVal to compare</param>
+        /// <param name="b">Right GradVal to compare</param>
+        /// <returns>True if value of <paramref name="a"/> is equal to the value of <paramref name="b"/></returns>
         public static bool operator ==(GradVal a, GradVal b) => a.Value == b.Value;
 
+        /// <summary>
+        /// Compare whether the value of <paramref name="a"/> is not equal to the value of <paramref name="b"/>.
+        /// Does not compare gradient or Hessian.
+        /// </summary>
+        /// <param name="a">Left GradVal to compare</param>
+        /// <param name="b">Right GradVal to compare</param>
+        /// <returns>True if value of <paramref name="a"/> is not equal to the value of <paramref name="b"/></returns>
         public static bool operator !=(GradVal a, GradVal b) => a.Value != b.Value;
 
+        /// <summary>
+        /// Compare whether the value of <paramref name="a"/> is less than or equal to the value of <paramref name="b"/>.
+        /// Does not compare gradient or Hessian.
+        /// </summary>
+        /// <param name="a">Left GradVal to compare</param>
+        /// <param name="b">Right GradVal to compare</param>
+        /// <returns>True if value of <paramref name="a"/> is less than or equal to the value of <paramref name="b"/></returns>
         public static bool operator <=(GradVal a, GradVal b) => a.Value <= b.Value;
 
+        /// <summary>
+        /// Compare whether the value of <paramref name="a"/> is greater than or equal to the value of <paramref name="b"/>.
+        /// Does not compare gradient or Hessian.
+        /// </summary>
+        /// <param name="a">Left GradVal to compare</param>
+        /// <param name="b">Right GradVal to compare</param>
+        /// <returns>True if value of <paramref name="a"/> is greater than or equal to the value of <paramref name="b"/></returns>
         public static bool operator >=(GradVal a, GradVal b) => a.Value >= b.Value;
 
         /// <summary>
@@ -235,16 +460,25 @@ namespace GradGraph
         }
     }
 
+    /// <summary>
+    /// An immutable vector of GradVals, used for the inputs and outputs of multivariate functions.
+    /// Tracks how many inputs its elements depend on, and gives the Jacobian of the elements with respect to those inputs.
+    /// </summary>
     public readonly struct GradVector : IEnumerable<GradVal>
     {
         private readonly GradVal[] Values;
         private readonly int _length;
         private readonly int _inputLength;
+        /// <summary>
+        /// Length of the GradVector.
+        /// </summary>
         public readonly int Length {get => _length;}
 
-        /*
-            Creates a new Vector with the given values.
-        */
+        /// <summary>
+        /// Creates a new GradVector with new GradVals created from <paramref name="values"/>.
+        /// All elements in <paramref name="values"/> are assumed to depend on each other and therefore have a gradient length of <paramref name="values"/>.Count().
+        /// </summary>
+        /// <param name="values">double values to hold</param>
         public GradVector(IEnumerable<double> values)
         {
             var arr = values.ToArray();
@@ -281,9 +515,11 @@ namespace GradGraph
                 Values[i] = new GradVal(values, i);
         }
 
-        /*
-            Creates a new Vector that creates a COPY of the values passed, not a reference.
-        */
+        /// <summary>
+        /// Creates a new GradVector that creates a copy of each element in <paramref name="values"/>.
+        /// <b>Clones each value, and does not hold a reference.</b>
+        /// </summary>
+        /// <param name="values">Values to hold</param>
         public GradVector(params GradVal[] values)
         {
             Values = (GradVal[])values.Clone();
@@ -291,9 +527,11 @@ namespace GradGraph
             _inputLength = GradMath.InputSize(values);
         }
 
-        /*
-            Creates a copy of the given Vector by copying the GradVal[] and thus safe for use in the GradGraph
-        */
+        /// <summary>
+        /// Creates a new GradVector that creates a copy of each element in <paramref name="toCopy"/>.
+        /// <b>Clones the GradVector, and does not hold a reference.</b>
+        /// </summary>
+        /// <param name="toCopy">GradVector to copy</param>
         public GradVector(GradVector toCopy)
         {
             Values = (GradVal[])toCopy.Values.Clone();
@@ -313,16 +551,24 @@ namespace GradGraph
             _length = length;
             _inputLength = inputLength;
         }
-        
-        // Allow array indexing for reading but no setting
+
+        /// <summary>
+        /// Allow array indexing of GradVectors.
+        /// <b>Can only be used for getting, not setting.</b>
+        /// </summary>
+        /// <param name="index">Element index</param>
+        /// <returns>Element at <paramref name="index"/></returns>
         public GradVal this[int index]
         {
             get => Values[index];
         }
 
-        /*
-            Build the Jacobian Matrix from the derivatives of the vector elements.
-        */
+        /// <summary>
+        /// Use the gradient of each GradVal to build the Jacobian of the GradVector.
+        /// Casts constant GradVals to the input space of non-constant values.
+        /// </summary>
+        /// <returns>Jacobian Matrix as a MathNet matrix of doubles</returns>
+        /// <exception cref="InvalidOperationException">Thrown if the GradVector contains conflicting input spaces.</exception>
         public Matrix<double> GetJacobian()
         {
             if (_inputLength == 0) throw new InvalidOperationException("The Jacobian is undefined for non-differentiable expressions (vector of constants)");
@@ -333,17 +579,24 @@ namespace GradGraph
             return Matrix<double>.Build.DenseOfRowVectors(rows);
         }
 
-        /*
-            Creates a new Vector of all zeroes.
-        */
+        /// <summary>
+        /// Creates a new GradVector of <paramref name="size"/> of constants.
+        /// Because they are constants, they contain a null gradient and Hessian to be cast at runtime. 
+        /// </summary>
+        /// <param name="size">The length of the GradVector to create</param>
+        /// <returns>New GradVector of all constants</returns>
         public static GradVector Zeros(int size)
         {
             return new GradVector(new GradVal[size]);
         }
 
-        /*
-            Extends the Vector with the enumerable. Keeps Derivatives.
-        */
+        /// <summary>
+        /// Extends the GradVector with multiple extra GradVals.
+        /// Maintains input space continuity.
+        /// </summary>
+        /// <param name="extension">The enumerable to append to the end of this GradVector</param>
+        /// <returns>A new GradVector with the extension</returns>
+        /// <exception cref="ArgumentException">Thrown if <paramref name="extension"/> has a different input space from this GradVector</exception>
         public GradVector Extend(IEnumerable<GradVal> extension)
         {
             var arr = extension.ToArray();
@@ -361,10 +614,12 @@ namespace GradGraph
         }
 
         /// <summary>
-        /// Appends a new value to the end of the Vector
+        /// Appends a new value to the end of the GradVector.
+        /// Maintains input space continuity.
         /// </summary>
         /// <param name="value">Value to append</param>
         /// <returns>New Vector with the value appended</returns>
+        /// <exception cref="ArgumentException">Thrown if <paramref name="value"/> has a different input space from this GradVector</exception>
         public GradVector Append(GradVal value)
         {
             AssertInputLengthContinuity(value);
@@ -378,6 +633,14 @@ namespace GradGraph
         /*
             Concatenates two Vectors together. Keeps Derivatives.
         */
+        /// <summary>
+        /// Concatenates two GradVectors together, keeping gradients and Hessians.
+        /// Maintains input space continuity.
+        /// </summary>
+        /// <param name="vec1">Left GradVector to concatenate</param>
+        /// <param name="vec2">Right GradVector to concatenate</param>
+        /// <returns>A new GradVector that contains copies of all elements of <paramref name="vec1"/> on the left and <paramref name="vec2"/> on the right</returns>
+        /// <exception cref="ArgumentException">Thrown if <paramref name="vec1"/> has a different input space from <paramref name="vec2"/></exception>
         public static GradVector Concat(GradVector vec1, GradVector vec2)
         {
             vec1.AssertInputLengthContinuity(vec2);
@@ -399,16 +662,59 @@ namespace GradGraph
             new GradVector(Values.Select(func));
 
         // Operator definitions for Vector-Vector operations. Does not include * or / since they aren't well defined generally, they are kept as seperate functions.
+        /// <summary>
+        /// Element-wise addition of two GradVectors.
+        /// Preserves accurate gradients and Hessians.
+        /// </summary>
+        /// <param name="a">Left GradVector to add</param>
+        /// <param name="b">Right GradVector to add</param>
+        /// <returns>New GradVector with the values, gradients, and Hessians resulting from element-wise addition</returns>
+        /// <exception cref="IndexOutOfRangeException">Thrown if the two GradVectors are not the same length</exception>
+        /// <exception cref="ArgumentException">Thrown if the two GradVectors depend on different numbers of inputs</exception>
         public static GradVector operator +(GradVector a, GradVector b) => LinearCombine(a, 1, b, 1);
+        /// <summary>
+        /// Element-wise subtraction of two GradVectors.
+        /// Preserves accurate gradients and Hessians.
+        /// </summary>
+        /// <param name="a">GradVector to get subtracted from</param>
+        /// <param name="b">GradVector to subtract</param>
+        /// <returns>New GradVector with the values, gradients, and Hessians resulting from element-wise subtraction</returns>
+        /// <exception cref="IndexOutOfRangeException">Thrown if the two GradVectors are not the same length</exception>
+        /// <exception cref="ArgumentException">Thrown if the two GradVectors depend on different numbers of inputs</exception>
         public static GradVector operator -(GradVector a, GradVector b) => LinearCombine(a, 1, b, -1);
 
         // Operator definitions for scalar operations.
+        /// <summary>
+        /// Multiply every element of a GradVector by a constant.
+        /// Preserves accurate gradients and Hessians.
+        /// </summary>
+        /// <param name="a">GradVector to be scalar multiplied</param>
+        /// <param name="b">Constant to multiply by</param>
+        /// <returns>New GradVector with the values, gradients, and Hessians resulting from scalar multiplication</returns>
         public static GradVector operator *(GradVector a, double b) => Scale(a, b);
+        /// <summary>
+        /// Multiply every element of a GradVector by a constant.
+        /// Preserves accurate gradients and Hessians.
+        /// </summary>
+        /// <param name="a">Constant to multiply by</param>
+        /// <param name="b">GradVector to be scalar multiplied</param>
+        /// <returns>New GradVector with the values, gradients, and Hessians resulting from scalar multiplication</returns>
         public static GradVector operator *(double a, GradVector b) => Scale(b, a);
 
+        /// <summary>
+        /// Divide every element of a GradVector by a constant.
+        /// Preserves accurate gradients and Hessians.
+        /// </summary>
+        /// <param name="a">GradVector to be scalar divided</param>
+        /// <param name="b">Constant to divide by</param>
+        /// <returns>New GradVector with the values, gradients, and Hessians resulting from scalar division</returns>
         public static GradVector operator /(GradVector a, double b) => Scale(a, 1.0/b);
 
         // Implement the enumerator functions
+        /// <summary>
+        /// Returns an enumerator that iterates through the collection.
+        /// </summary>
+        /// <returns>An enumerator that can be used to iterate through the collection.</returns>
         public IEnumerator<GradVal> GetEnumerator()
         {
             return ((IEnumerable<GradVal>)Values).GetEnumerator(); ;
@@ -495,6 +801,10 @@ namespace GradGraph
             Constants(values.ToArray());
     }
 
+    /// <summary>
+    /// Static math functions for GradVals and GradVectors, such as Dot and Sin, that carry the gradient and Hessian through.
+    /// Also includes Chain for defining your own functions and InputSize for checking input dimensions.
+    /// </summary>
     public static class GradMath
     {
         /// <summary>
