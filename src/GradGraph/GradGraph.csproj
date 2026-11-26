@@ -11,7 +11,7 @@
 
     <!-- Metadata -->
     <PackageId>GradGraph</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <Authors>Licensed-Driver</Authors>
     <Description>Exact forward-mode automatic differentiation (value, gradient and Hessian) on top of MathNet.Numerics.</Description>
     <PackageTags>autodiff;automatic-differentiation;gradient;hessian;jacobian;mathnet;unity</PackageTags>
