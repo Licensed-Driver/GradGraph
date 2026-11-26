@@ -147,7 +147,7 @@ namespace GradGraph.Tests
             var a = new GradVector(new[] { 1.0, 2.0 });
             var b = new GradVector(new[] { 1.0, 2.0, 3.0 });
 
-            Assert.Throws<IndexOutOfRangeException>(() => GradMath.Dot(a, b));
+            Assert.Throws<ArgumentException>(() => GradMath.Dot(a, b));
         }
 
         [Fact]

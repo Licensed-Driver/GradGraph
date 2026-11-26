@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using MathNet.Numerics.LinearAlgebra;
 using MathNet.Numerics;
+using System.Security.Cryptography.X509Certificates;
 
 namespace GradGraph
 {
@@ -18,11 +19,15 @@ namespace GradGraph
     {
 
         // The derivative of it's vector with respect to the initial value
-        private readonly Vector<double> _gradient;
+        private readonly double[] _gradient;
+        internal ReadOnlySpan<double> Gradient => _gradient;
         // The second derivative of it's vector with respect to the initial value
-        private readonly Matrix<double> _hessian;
+        private readonly double[] _hessian;    // n*n symmetric
+        internal ReadOnlySpan<double> Hessian => _hessian;
         // Private constructor to copy over all values from another GradVal into a new one
-        private GradVal(double value, Vector<double> derivative, Matrix<double> secondDeriv) => (Value, _gradient, _hessian) = (value, derivative, secondDeriv);
+        // DOES NOT CLONE
+        // PRIVATE SO THIS ASSUMES YOUVE ALREADY ALLOCATED AND CLONED ARRAYS
+        private GradVal(double value, double[] gradient, double[] hessian) => (Value, _gradient, _hessian) = (value, gradient, hessian);
 
         /// <summary>
         /// Double value of this GradVal.
@@ -33,19 +38,19 @@ namespace GradGraph
         /// Retrives a copy of the gradient for this GradVal instance.
         /// </summary>
         /// <returns>A clone of the gradient vector</returns>
-        public Vector<double> GetGradient() => _gradient?.Clone();
+        public Vector<double> GetGradient() => _gradient == null ? null : Vector<double>.Build.DenseOfArray(_gradient);
 
         /// <summary>
         /// Retrieves a copy of the Hessian matrix for this GradVal instance.
         /// </summary>
         /// <returns>A clone of the Hessian matrix</returns>
-        public Matrix<double> GetHessian() => _hessian?.Clone();
+        public Matrix<double> GetHessian() => _hessian == null ? null : Matrix<double>.Build.DenseOfColumnMajor(_gradient.Length, _gradient.Length, _hessian);
 
         /// <summary>
         /// The amount of inputs for this gradval.
         /// i.e. The number of variables this GradVal depends on, and the length of the gradient Vector.
         /// </summary>
-        public int Length => _gradient?.Count ?? 0;
+        public int Length => _gradient?.Length ?? 0;
 
         /// <summary>
         /// Create a new GradVal that represents a constant with no gradient
@@ -74,8 +79,9 @@ namespace GradGraph
         {
             if (position >= vals.Length || position < 0) throw new IndexOutOfRangeException($"Position {position} is out of range for {vals.Length} values");
             Value = vals[position];
-            _gradient = Vector<double>.Build.Dense(vals.Length, i => i == position ? 1.0 : 0.0);   // All start at 0
-            _hessian = Matrix<double>.Build.Dense(vals.Length, vals.Length);
+            _gradient = new double[vals.Length];   // All start at 0
+            _gradient[position] = 1;    // Depends on itself
+            _hessian = new double[vals.Length * vals.Length];   // All 0
         }
 
         /// <summary>
@@ -89,8 +95,9 @@ namespace GradGraph
         {
             if (position >= size || position < 0) throw new IndexOutOfRangeException($"Position {position} is out of range for {size} values");
             Value = value;
-            _gradient = Vector<double>.Build.Dense(size, i => i == position ? 1.0 : 0);
-            _hessian = Matrix<double>.Build.Dense(size, size);
+            _gradient = new double[size];
+            _gradient[position] = 1;
+            _hessian = new double[size * size];
         }
 
         /// <summary>
@@ -100,8 +107,19 @@ namespace GradGraph
         /// <param name="df">The first derivative of the scalar function</param>
         /// <param name="d2f">The second derivative of the scalar function</param>
         /// <returns>A new GradVal with the value, gradient, and Hessian fully calculated during the forward computation.</returns>
-        public GradVal Chain(double f, double df, double d2f) =>
-            new GradVal(f, Scale(_gradient, df), Combine(OuterProduct(_gradient, _gradient), d2f, _hessian, df));
+        public GradVal Chain(double f, double df, double d2f)
+        {
+            // Hessian can't be null if gradient isn't null, and can't be defined if gradient isn't defined
+            if (_gradient == null) return new GradVal(f, null, null);
+            
+            var retHess = new double[_gradient.Length * _gradient.Length];
+
+            for (int i = 0; i < _gradient.Length; i++)
+                for (int j = i; j < _gradient.Length; j++)
+                    retHess[i * _gradient.Length + j] = retHess[j * _gradient.Length + i] = _gradient[i] * _gradient[j] * d2f + _hessian[i * _gradient.Length + j] * df;
+
+            return new GradVal(f, Scale(_gradient, df), retHess);
+        }
 
         /// <summary>
         /// Calculate a new GradVal holding the Sine of this GradVal.
@@ -297,7 +315,7 @@ namespace GradGraph
         /// <param name="a">Left GradVal to add</param>
         /// <param name="b">Right GradVal to add</param>
         /// <returns>New GradVal with the value, gradient, and Hessian resulting from addition</returns>
-        public static GradVal operator +(GradVal a, GradVal b) => new GradVal(a.Value + b.Value, Combine(a._gradient, 1, b._gradient, 1), Combine(a._hessian, 1, b._hessian, 1));
+        public static GradVal operator +(GradVal a, GradVal b) => new GradVal(a.Value + b.Value, Add(a._gradient, b._gradient), Add(a._hessian, b._hessian));
 
         /// <summary>
         /// Subtract two GradVals.
@@ -306,7 +324,7 @@ namespace GradGraph
         /// <param name="a">GradVal to get subtracted from</param>
         /// <param name="b">GradVal to subtract</param>
         /// <returns>New GradVal with the value, gradient, and Hessian resulting from subtraction</returns>
-        public static GradVal operator -(GradVal a, GradVal b) => new GradVal(a.Value - b.Value, Combine(a._gradient, 1, b._gradient, -1), Combine(a._hessian, 1, b._hessian, -1));
+        public static GradVal operator -(GradVal a, GradVal b) => new GradVal(a.Value - b.Value, Sub(a._gradient, b._gradient), Sub(a._hessian, b._hessian));
 
         /// <summary>
         /// Multiply two GradVals.
@@ -315,7 +333,7 @@ namespace GradGraph
         /// <param name="a">Left GradVal to multiply</param>
         /// <param name="b">Right GradVal to multiply</param>
         /// <returns>New GradVal with the value, gradient, and Hessian resulting from multiplication</returns>
-        public static GradVal operator *(GradVal a, GradVal b) => new GradVal(a.Value * b.Value, Combine(a._gradient, b.Value, b._gradient, a.Value), Combine(Combine(a._hessian, b.Value, b._hessian, a.Value), 1, Combine(OuterProduct(a._gradient, b._gradient), 1, OuterProduct(b._gradient, a._gradient), 1), 1));
+        public static GradVal operator *(GradVal a, GradVal b) => ValMultiply(a, b);
 
         /// <summary>
         /// Divide a GradVal by another GradVal.
@@ -324,7 +342,7 @@ namespace GradGraph
         /// <param name="a">Numerator GradVal</param>
         /// <param name="b">Denominator GradVal</param>
         /// <returns>New GradVal with the value, gradient, and Hessian resulting from division</returns>
-        public static GradVal operator /(GradVal a, GradVal b) => a * (1/b);    // All steps copy so we chillin
+        public static GradVal operator /(GradVal a, GradVal b) => ValDivide(a, b);
 
         /// <summary>
         /// Compare whether the value of <paramref name="a"/> is greater than the value of <paramref name="b"/>.
@@ -405,58 +423,259 @@ namespace GradGraph
             Value.GetHashCode();
 
         /*
+            Divide two GradVals.
+            2 Allocation.
+        */
+        private static GradVal ValDivide(GradVal src1, GradVal src2)
+        {
+            var src1Null = src1._gradient == null;
+            var src2Null = src2._gradient == null;
+
+            if (src1Null && src2Null) return new GradVal(src1.Value / src2.Value);
+            // Divide constant by non-constant
+            if (src1Null) return src2.Chain(src1.Value / src2.Value, -src1.Value / (src2.Value * src2.Value), 2 * src1.Value / Math.Pow(src2.Value, 3));
+            // Divide by constant
+            if (src2Null) return new GradVal(src1.Value / src2.Value, Scale(src1._gradient, 1 / src2.Value), Scale(src1._hessian, 1 / src2.Value));
+
+            int n = src1._gradient.Length;
+
+            if (src1._gradient.Length != src2._gradient.Length) throw new ArgumentException($"Cannot divide GradVals from different input spaces of length {src1._gradient.Length} and {src2._gradient.Length}");
+
+            var retGrad = new double[n];
+            var retHess = new double[n * n];
+
+            var f = 1 / src2.Value;
+            var df = -1 / (src2.Value * src2.Value);
+            var d2f = 2 * f * f * f;
+
+            for (int i = 0; i < n; i++)
+            {
+                retGrad[i] = src1._gradient[i] * f + src2._gradient[i] * df * src1.Value;
+
+                for (int j = i; j < n; j++)
+                {
+                    double src2Hess = src2._gradient[i] * src2._gradient[j] * d2f + src2._hessian[i * src2._gradient.Length + j] * df;
+                    var combination = src1._hessian[i * n + j] * f + src2Hess * src1.Value;
+                    var outerProd1 = src1._gradient[i] * src2._gradient[j] * df;
+                    var outerProd2 = src2._gradient[i] * df * src1._gradient[j];
+                    retHess[i * n + j] = retHess[j * n + i] = combination + outerProd1 + outerProd2;
+                }
+            }
+
+            return new GradVal(src1.Value * f, retGrad, retHess);
+        }
+
+        /*
+            Multiply two GradVals.
+            2 Allocations.
+        */
+        private static GradVal ValMultiply(GradVal src1, GradVal src2)
+        {
+            var src1Null = src1._gradient == null;
+            var src2Null = src2._gradient == null;
+
+            if (src1Null && src2Null) return new GradVal(src1.Value * src2.Value);
+            if (src1Null) return new GradVal(src1.Value * src2.Value, Scale(src2._gradient, src1.Value), Scale(src2._hessian, src1.Value));
+            if (src2Null) return new GradVal(src2.Value * src1.Value, Scale(src1._gradient, src2.Value), Scale(src1._hessian, src2.Value));
+
+            int n = src1._gradient.Length;
+
+            if (src1._gradient.Length != src2._gradient.Length) throw new ArgumentException($"Cannot multiply GradVals from different input spaces of length {src1._gradient.Length} and {src2._gradient.Length}");
+
+            var retGrad = new double[n];
+            var retHess = new double[n * n];
+
+            for (int i = 0; i < n; i++)
+            {
+                retGrad[i] = src1._gradient[i] * src2.Value + src2._gradient[i] * src1.Value;
+
+                for (int j = i; j < n; j++)
+                {
+                    var combination = src1._hessian[i * n + j] * src2.Value + src2._hessian[i * n + j] * src1.Value;
+                    var outerProd1 = src1._gradient[i] * src2._gradient[j];
+                    var outerProd2 = src2._gradient[i] * src1._gradient[j];
+                    retHess[i * n + j] = retHess[j * n + i] = combination + outerProd1 + outerProd2;
+                }
+            }
+            return new GradVal(src1.Value * src2.Value, retGrad, retHess);
+        }
+
+        /*
             Linearly combines the two given derivative arrays using the given coefficients.
+            1 Allocation.
         */
-        private static Vector<double> Combine(Vector<double> vec1, double coef1, Vector<double> vec2, double coef2)
+        private static double[] Combine(double[] src1, double coef1, double[] src2, double coef2)
         {
             // null derivatives mean all zero, so just scale the other one (null if both are null)
-            if (vec1 == null) return Scale(vec2, coef2);
-            if (vec2 == null) return Scale(vec1, coef1);
-            if (vec1.Count != vec2.Count) throw new IndexOutOfRangeException($"Vector of length {vec1.Count} cannot be combined with vector of length {vec2.Count}");
-            return coef1 * vec1 + coef2 * vec2;
-        }
-
-        /*
-            Linearly combines the two given hessians or other matrices with the given coefficients.
-        */
-        private static Matrix<double> Combine(Matrix<double> mat1, double coef1, Matrix<double> mat2, double coef2)
-        {
-            // null derivatives mean all zero, so just scale the other one (null if both are null)
-            if (mat1 == null) return Scale(mat2, coef2);
-            if (mat2 == null) return Scale(mat1, coef1);
-            if (mat1.RowCount != mat2.RowCount || mat1.ColumnCount != mat2.ColumnCount) throw new IndexOutOfRangeException($"Matrix of shape [{mat1.RowCount}x{mat1.ColumnCount}] is not able to be linearly combined with matrix of shape [{mat2.RowCount}x{mat2.ColumnCount}]");
-            return coef1 * mat1 + coef2 * mat2;
-        }
-
-        /*
-            Scales the given derivative array by the given coefficient.
-        */
-        private static Vector<double> Scale(Vector<double> deriv, double coef)
-        {
-            // Since new GradVal[n] doesn't create the Derivative reference
-            if (deriv == null) return null;
-            return deriv.Clone() * coef;
+            if (src1 == null) return Scale(src2, coef2);
+            if (src2 == null) return Scale(src1, coef1);
+            if (src1.Length != src2.Length) throw new ArgumentException($"Double array of length {src1.Length} cannot be combined with double array of length {src2.Length}");
+            // Do the scale and add here so that we only do 1 allocation instead of 4
+            var ret = new double[src1.Length];
+            for (int i = 0; i < ret.Length; i++) ret[i] = src1[i] * coef1 + src2[i] * coef2;
+            return ret;
         }
 
         /*
             Scales the given matrix by the given coefficient.
+            1 Allocation.
         */
-        private static Matrix<double> Scale(Matrix<double> hessian, double coef)
+        private static double[] Scale(double[] src, double coef)
         {
-            if (hessian == null) return null;
-            return hessian.Clone() * coef;
+            if (src == null) return null;
+            var ret = new double[src.Length];
+            for (int i = 0; i < ret.Length; i++) ret[i] = src[i] * coef;
+            return ret;
+        }
+
+        /*
+            Element-wise add two vectors/matrices together.
+            1 Allocation.
+        */
+        private static double[] Add(double[] src1, double[] src2)
+        {
+            if (src1 == null && src2 == null) return null;
+            if (src1 == null) return (double[])src2.Clone();
+            if (src2 == null) return (double[])src1.Clone();
+            if (src1.Length != src2.Length) throw new ArgumentException($"Cannot add double array of length {src1.Length} to array of length {src2.Length}");
+            var ret = new double[src1.Length];
+            for (int i = 0; i < ret.Length; i++) ret[i] = src1[i] + src2[i];
+            return ret;
+        }
+
+        /*
+            Element-wise subtract two vectors/matrices.
+            1 Allocation.
+        */
+        private static double[] Sub(double[] src1, double[] src2)
+        {
+            if (src1 == null && src2 == null) return null;
+            if (src1 == null) return Scale(src2, -1);
+            if (src2 == null) return (double[])src1.Clone();
+            if (src1.Length != src2.Length) throw new ArgumentException($"Cannot subtract double array of length {src1.Length} to array of length {src2.Length}");
+            var ret = new double[src1.Length];
+            for (int i = 0; i < ret.Length; i++) ret[i] = src1[i] - src2[i];
+            return ret;
         }
 
         /*
             Safely calculates the outer product of two vectors.
+            1 Allocation.
         */
-        private static Matrix<double> OuterProduct(Vector<double> vec1, Vector<double> vec2)
+        private static double[] OuterProduct(double[] vec1, double[] vec2)
         {
-            if (vec1 == null && vec2 == null) return null;
-            if (vec1 == null) return Matrix<double>.Build.Dense(vec2.Count, vec2.Count);
-            if (vec2 == null) return Matrix<double>.Build.Dense(vec1.Count, vec1.Count);
+            if (vec1 == null || vec2 == null) return null;
 
-            return vec1.OuterProduct(vec2);
+            var ret = new double[vec1.Length*vec2.Length];
+            for (int i = 0; i < vec1.Length; i++)
+                for (int j = 0; j < vec2.Length; j++)
+                    ret[i * vec2.Length + j] = vec1[i] * vec2[j];
+
+            return ret;
+        }
+
+        /*
+            Applies chain rule in place
+        */
+        private static void ChainInPlace(double[] gradient, double[] hessian, double f, double df, double d2f)
+        {
+            // Hessian can't be null if gradient isn't null, and can't be defined if gradient isn't defined
+            if (gradient == null) return;
+
+            ScaleInPlace(gradient, df);
+
+            for (int i = 0; i < gradient.Length; i++)
+                for (int j = i; j < gradient.Length; j++)
+                    hessian[i * gradient.Length + j] = hessian[j * gradient.Length + i] = gradient[i] * gradient[j] * d2f + hessian[i * gradient.Length + j] * df;
+        }
+
+        /*
+            Scales gradient in place
+        */
+        private static void ScaleInPlace(double[] val, double coef)
+        {
+            if (val == null) return;
+
+            for (int i = 0; i < val.Length; i++)
+                val[i] *= coef;
+        }
+
+        /*
+            Fused dot product to minimize allocations
+            Assumes caller handles mismatched dimensions
+        */
+        internal static GradVal Dot(ReadOnlySpan<GradVal> a, ReadOnlySpan<GradVal> b, int inputDim)
+        {
+            if (a.Length != b.Length) throw new ArgumentException($"Cannot dot vectors of differing sizes {a.Length} and {b.Length}");
+            if (a.Length == 0) return new GradVal(0);
+
+            double value = 0;
+            var gradient = inputDim == 0 ? null : new double[inputDim];
+            var hessian = inputDim == 0 ? null : new double[inputDim*inputDim];
+            var m = a.Length;
+            var n = inputDim;
+
+            double combination;
+            double outerProd1;
+            double outerProd2;
+            bool aNull;
+            bool bNull;
+
+            for (int i = 0; i < m; i++)
+            {
+                aNull = a[i].Length == 0;
+                bNull = b[i].Length == 0;
+
+                if (aNull && bNull)
+                {
+                    value += a[i].Value * b[i].Value;
+                    continue;
+                }
+                if (aNull)
+                {
+                    value += a[i].Value * b[i].Value;
+                    for (int j = 0; j < n; j++)
+                    {
+                        gradient[j] += b[i]._gradient[j] * a[i].Value;
+                        for (int k = j; k < n; k++)
+                            hessian[j * n + k] += b[i]._hessian[j * n + k] * a[i].Value;
+                    }
+                    continue;
+                }
+                else if (bNull)
+                {
+                    value += a[i].Value * b[i].Value;
+                    for (int j = 0; j < n; j++)
+                    {
+                        gradient[j] += a[i]._gradient[j] * b[i].Value;
+                        for (int k = j; k < n; k++)
+                            hessian[j * n + k] += a[i]._hessian[j * n + k] * b[i].Value;
+                    }
+                    continue;
+                }
+
+                if (a[i]._gradient.Length != b[i]._gradient.Length) throw new ArgumentException($"Cannot multiply GradVals from different input spaces of length {a[i]._gradient.Length} and {b[i]._gradient.Length}");
+
+                value += a[i].Value * b[i].Value;
+                for (int j = 0; j < n; j++)
+                {
+                    gradient[j] += b[i].Value * a[i]._gradient[j] + a[i].Value * b[i]._gradient[j];
+
+                    for (int k = j; k < n; k++)
+                    {
+                        combination = a[i]._hessian[j * n + k] * b[i].Value + b[i]._hessian[j * n + k] * a[i].Value;
+                        outerProd1 = a[i]._gradient[j] * b[i]._gradient[k];
+                        outerProd2 = b[i]._gradient[j] * a[i]._gradient[k];
+                        hessian[j * n + k] += combination + outerProd1 + outerProd2;
+                    }
+                }
+            }
+
+            for (int i = 0; i < n; i++)
+                for (int j = i; j < n; j++)
+                    hessian[j * n +  i] = hessian[i * n + j];
+
+            return new GradVal(value, gradient, hessian);
         }
     }
 
@@ -469,6 +688,8 @@ namespace GradGraph
         private readonly GradVal[] Values;
         private readonly int _length;
         private readonly int _inputLength;
+        internal ReadOnlySpan<GradVal> Span => Values;
+        internal int InputLength => _inputLength;
         /// <summary>
         /// Length of the GradVector.
         /// </summary>
@@ -572,11 +793,18 @@ namespace GradGraph
         public Matrix<double> GetJacobian()
         {
             if (_inputLength == 0) throw new InvalidOperationException("The Jacobian is undefined for non-differentiable expressions (vector of constants)");
-            List<Vector<double>> rows = new List<Vector<double>>();
+            double[] jacMatrix = new double[_length * _inputLength];
             // Since we treat null derivatives as all 0s we don't throw before we get here, so we gotta make sure the matrix won't throw em
             for (int i = 0; i < _length; i++)
-                rows.Add(Values[i].GetGradient() ?? Vector<double>.Build.Dense(_inputLength, 0.0));
-            return Matrix<double>.Build.DenseOfRowVectors(rows);
+            {
+                var gradient = Values[i].Gradient;
+                // double[] zeros mem by default
+                if (Values[i].Length != 0)
+                    for (int j = 0; j < _inputLength; j++)
+                        jacMatrix[j * _length + i] = gradient[j];
+            }
+
+            return Matrix<double>.Build.Dense(_length, _inputLength, jacMatrix);
         }
 
         /// <summary>
@@ -813,18 +1041,9 @@ namespace GradGraph
         /// <param name="a">First Vector</param>
         /// <param name="b">Second Vector</param>
         /// <returns>a*b where * is the dot product</returns>
-        /// <exception cref="IndexOutOfRangeException">Thrown if the two vectors are not of the same size</exception>
-        public static GradVal Dot(GradVector a, GradVector b)
-        {
-            if (a.Length != b.Length) throw new IndexOutOfRangeException($"Vector of length {a.Length} cannot be combined with vector of length {b.Length}");
-
-            GradVal ret = default;
-
-            for (int i = 0; i < a.Length; i++)
-                ret += a[i] * b[i];
-
-            return ret;
-        }
+        /// <exception cref="ArgumentException">Thrown if the two vectors are not of the same size or not the same input space</exception>
+        public static GradVal Dot(GradVector a, GradVector b) =>
+            GradVal.Dot(a.Span, b.Span, a.InputLength != 0 ? a.InputLength : b.InputLength);
 
         /// <summary>
         /// Get the size of the input of the given values.
